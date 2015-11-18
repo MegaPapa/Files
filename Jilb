@@ -1,0 +1,227 @@
+unit Unit1;
+
+interface
+
+uses
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls,RegularExpressions;
+
+type
+  TForm1 = class(TForm)
+    MemoCode: TMemo;
+    ButtonAnalyze: TButton;
+    LabelOperators: TLabel;
+    LabelConditional: TLabel;
+    LabelInside: TLabel;
+    LabelAllCl: TLabel;
+    procedure FormCreate(Sender: TObject);
+    procedure ButtonAnalyzeClick(Sender: TObject);
+  private
+    { Private declarations }
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+  max_nesting,current_nesting : integer;
+  Check_string,check_multiline_comment,check_slash_comment : boolean;
+  OperatorsArray : array [0..35] of string =
+   ('\b=\b','\b\+\b','\b-\b','\+\+','--','\b%\b','![a-z]','\b==\b','\b!=\b','\b>b',
+   '\b<\b','\b>=\b','\b<=\b','\b&&\b','\b||\b','\b&\b','\b|\b','\b^\b','\b<<\b',
+   '\b>>\b','[[a-z]]','\bint\b','\bfloat\b','\bbool\b','\bdouble\b','\bbyte\b',
+   '\bdelete\b','\bnew\b',',','\bsizeof\b','\bbreak\b','\bgoto\b','{','-=','\+=','\bvoid\b');
+   ConditionalArray : array [0..2] of string = ('\bif\b','\bswitch\b',
+                                                '[a-z=+\-&*\\]?[a-z]:[a-z]');
+
+implementation
+
+{$R *.dfm}
+
+
+function INS(MemoCode : TMemo; i : integer) : integer;
+var
+   j : integer;
+   check_condition : boolean;
+begin
+   j := i;
+   check_condition := false;
+   while j <> length(MemoCode.Text) do
+   begin
+      if (MemoCode.Text[j] = ')') and (MemoCode.Text[j+1] = #13) then
+         check_condition := true;      //проверяем - закончилось ли условие if'а
+      if (check_condition) then
+      begin
+         while (not ((MemoCode.Text[j]) in ['A'..'z'])) do
+            inc(j);
+         if ((MemoCode.Text[j] = 'i') and (MemoCode.Text[j+1] = 'f')) or (MemoCode.Text[j] = '{') then
+         begin
+            if (MemoCode.Text[j] = 'i') and (MemoCode.Text[j+1] = 'f') then
+            begin
+               inc(current_nesting);
+               if current_nesting > max_nesting then
+                  max_nesting := current_nesting;
+               INS(MemoCode,j);   //рекурсивно вызываем нашу функцию
+            end
+            else
+            begin
+               while (MemoCode.Text[j] <> '}') do
+               begin
+                  if (MemoCode.Text[j] = 'i') and (MemoCode.Text[j+1] = 'f') then
+                  begin
+                     inc(current_nesting);
+                     if current_nesting > max_nesting then
+                        max_nesting := current_nesting;
+                     INS(MemoCode,j);
+                  end;
+                  inc(j);
+               end;
+            end;
+         end
+         else
+            break;
+      end;
+      inc(j);
+   end;
+end;
+
+function Check_On_Comment(MemoCode : TMemo; i : integer) : boolean;
+begin
+ //проверка на однострочные комментарии
+   if (memocode.Text[i] = '/') and (memocode.Text[i+1] = '/') and (not Check_string) and (not check_multiline_comment) then
+      check_slash_comment := true;
+   if (MemoCode.Text[i] = #13) then
+      check_slash_comment := false;
+   //проверка на многострочные комментарии
+   if (((MemoCode.Text[i] = '/') and (MemoCode.Text[i+1] = '*')) or ((MemoCode.Text[i-1] = '*') and (MemoCode.Text[i] = '/'))) and (not check_string) and (not check_slash_comment) then
+      if (not check_multiline_comment) then
+         check_multiline_comment := true
+      else
+         check_multiline_comment := false;
+   //проверка на строку
+   if (MemoCode.Text[i] = '"') and (not check_multiline_comment) and (not check_slash_comment) then
+      if (not check_string) then
+         check_string := true
+      else
+         check_string := false;
+   if (not check_string) and (not check_multiline_comment) and (not check_slash_comment) then
+      result := true
+   else
+      result := false;
+end;
+
+function Find_Operators(MemoCode : TMemo) : integer;
+var
+   RegEx : TRegEx;
+   HowMuchOperators : TMatchCollection;
+   i,j,k,Operators_Count,Operator_Index : integer;
+begin
+//находим количнство операторов при помощи регулярных выражений
+   Operators_Count := 0;
+   for k := 0 to high(OperatorsArray) do
+   begin
+      RegEx.Create(OperatorsArray[k]);
+      HowMuchOperators := RegEx.Matches(MemoCode.Text);
+      Operators_Count := Operators_Count + HowMuchOperators.Count;
+      for I := 0 to HowMuchOperators.Count - 1 do
+      begin
+         Operator_Index := HowMuchOperators[i].Index;
+         Check_string := false;
+         check_multiline_comment := false;
+         check_slash_comment := false;
+         for j := 1 to Operator_Index do
+            check_on_comment(MemoCode,j);
+//учитываем комментарии и строки
+         if (Check_string) or (check_slash_comment) or (check_multiline_comment)
+         then
+            Dec(Operators_Count);
+      end;
+   end;
+   result := Operators_Count;
+end;
+
+function Check_Conditional_Operator(MemoCode : TMemo; i : integer;var check_bracket,check_question,check_2point: boolean) : integer;
+begin
+//-----------------поиск if'а
+   if ((MemoCode.Text[i-1] = ' ') or (MemoCode.Text[i-1] = #10) or
+      (MemoCode.Text[i-1] = #9)) and (lowercase(MemoCode.Text[i]) = 'i') and
+      (lowercase(MemoCode.Text[i+1]) = 'f') and ((MemoCode.Text[i+2] = ' ') or
+      (MemoCode.Text[i+2] = #13))
+   then
+   begin
+      inc(result);
+      INS(MemoCode,i);
+      current_nesting := 0;
+   end;
+//-------------------поиск switch
+   if ((MemoCode.Text[i-1] = ' ') or (MemoCode.Text[i-1] = #10) or
+      (MemoCode.Text[i-1] = #9)) and (lowercase(MemoCode.Text[i]) = 's') and
+      (lowercase(MemoCode.Text[i+1]) = 'w') and (lowercase(MemoCode.Text[i+2]) = 'i') and
+      (lowercase(MemoCode.Text[i+3]) = 't') and (lowercase(MemoCode.Text[i+4]) = 'c') and
+      (lowercase(MemoCode.Text[i+5]) = 'h') and ((MemoCode.Text[i+6] = ' ') or
+      (MemoCode.Text[i+6] = #13))
+   then
+      inc(result);
+
+   //подсчитываем кол-во тернарных операторов---------------------------
+   if (MemoCode.Text[i] = '(') then
+      check_bracket := true;
+
+   if (MemoCode.Text[i] = '?') and (check_bracket) and (not check_question) then
+      check_question := true;
+
+   if (MemoCode.Text[i] = ':') and (check_bracket) and (not check_2point) then
+      check_2point := true;
+
+   if (check_question) and (check_2point) and (check_bracket) then
+   begin
+      inc(result);
+      check_question := false;
+      check_2point := false;
+   end;
+
+   if (MemoCode.Text[i] = ')') then
+      check_bracket := false;
+   //-----------------------------------------------------------------------------------
+end;
+
+function Find_CL(MemoCode : TMemo) : integer;
+var
+  I: Integer;
+  check_bracket,check_question,check_2point: boolean;
+begin
+   result := 0;
+   check_string := false;
+   check_multiline_comment := false;
+   check_slash_comment := false;
+   //i = 2,для того, чтобы не было выхода за границы массива, length('switch')
+   //тоже для исключения выхода за границы массива
+   for I := 2 to length(MemoCode.Text) - length('switch') do
+   //если не коммент, не строка и прочее - смотрим код
+   if (Check_On_Comment(MemoCode,i)) then
+      result := result + Check_Conditional_Operator(MemoCode,i,check_bracket,check_question,check_2point)
+
+end;
+
+procedure TForm1.ButtonAnalyzeClick(Sender: TObject);
+var
+   AllOperators,AllConditional : integer;
+begin
+   max_nesting := 0;
+   AllOperators := Find_Operators(MemoCode);
+   AllConditional := Find_CL(MemoCode);
+   LabelOperators.Caption := 'Количество операторов : ' + inttostr(AllOperators);
+   LabelConditional.Caption := 'Операторов условия : ' + inttostr(AllConditional);
+   LabelInside.Caption := 'Макс. вложенность : ' + inttostr(max_nesting);
+   if AllOperators <> 0 then
+      LabelAllCl.Caption := 'Относ. сложность : ' + floattostr(AllConditional/AllOperators);
+end;
+
+procedure TForm1.FormCreate(Sender: TObject);
+begin
+   MemoCode.Text := '';
+   max_nesting := 0;
+end;
+
+
+end.
