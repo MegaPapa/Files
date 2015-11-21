@@ -1,0 +1,153 @@
+unit Unit1;
+
+interface
+
+uses
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls,RegularExpressions;
+
+type
+  TFormMacCaibe = class(TForm)
+    MemoCode: TMemo;
+    ButtonAnalyze: TButton;
+    LabelMacNumber: TLabel;
+    LabelMeiers: TLabel;
+    ButtonLoad: TButton;
+    OpenDialog: TOpenDialog;
+    procedure FormCreate(Sender: TObject);
+    procedure ButtonAnalyzeClick(Sender: TObject);
+    procedure ButtonLoadClick(Sender: TObject);
+  private
+    { Private declarations }
+  public
+    { Public declarations }
+  end;
+
+var
+  FormMacCaibe: TFormMacCaibe;
+var
+   Check_string,check_multiline_comment,check_slash_comment : boolean;
+   BranchArray : array [0..4] of string = ('\bif\b','\bcase\b','\bwhile\b'
+                                          ,'([a-z]?[a-z,0-9]:[a-z,0-9])','\bdefault\b');
+
+implementation
+
+{$R *.dfm}
+
+function Check_On_Comment(MemoCode : TMemo; i : integer) : boolean;
+begin
+ //проверка на однострочные комментарии
+   if (memocode.Text[i] = '/') and (memocode.Text[i+1] = '/') and (not Check_string) and (not check_multiline_comment) then
+      check_slash_comment := true;
+   if (MemoCode.Text[i] = #13) then
+      check_slash_comment := false;
+   //проверка на многострочные комментарии
+   if (((MemoCode.Text[i] = '/') and (MemoCode.Text[i+1] = '*')) or ((MemoCode.Text[i-1] = '*') and (MemoCode.Text[i] = '/'))) and (not check_string) and (not check_slash_comment) then
+      if (not check_multiline_comment) then
+         check_multiline_comment := true
+      else
+         check_multiline_comment := false;
+   //проверка на строку
+   if (MemoCode.Text[i] = '"') and (not check_multiline_comment) and (not check_slash_comment) then
+      if (not check_string) then
+         check_string := true
+      else
+         check_string := false;
+   if (not check_string) and (not check_multiline_comment) and (not check_slash_comment) then
+      result := true
+   else
+      result := false;
+end;
+
+function predicates_on_line(MemoCode : TMemo;Index : integer) : integer;
+const
+   ENTER = #13;
+var
+   i,string_length : integer;
+   line : string;
+begin
+   result := 0;
+   i := index;
+   string_length := 0;
+   while (MemoCode.Text[I] <> ENTER) do
+   begin
+      line := line + MemoCode.Text[i];
+      inc(I);
+      inc(string_length);
+   end;
+   i := 1;
+   while (i <> string_length) do
+   begin
+      if ((line[I] = '&') and (line[I+1] = '&')) or ((line[I] = '|') and (line[I+1] = '|')) then
+         inc(result);
+      inc(i);
+   end;
+end;
+
+
+function Find_Operators(MemoCode : TMemo;LabelMeiers : TLabel) : integer;
+var
+   RegEx : TRegEx;
+   HowMuchOperators : TMatchCollection;
+   i,j,k,Operators_Count,Operator_Index,predicates : integer;
+begin
+//находим количнство операторов при помощи регулярных выражений
+   Operators_Count := 0;
+   predicates := 0;
+   for k := 0 to high(BranchArray) do
+   begin
+      RegEx.Create(BranchArray[k]);
+      HowMuchOperators := RegEx.Matches(MemoCode.Text);
+         Operators_Count := Operators_Count + HowMuchOperators.Count;
+      for I := 0 to HowMuchOperators.Count - 1 do
+      begin
+         Operator_Index := HowMuchOperators[i].Index;
+         Check_string := false;
+         check_multiline_comment := false;
+         check_slash_comment := false;
+         for j := 1 to Operator_Index do
+            check_on_comment(MemoCode,j);
+//учитываем комментарии и строки
+         if (Check_string) or (check_slash_comment) or (check_multiline_comment) then
+            Dec(Operators_Count);
+         if (not Check_string) and (not check_slash_comment) and (not check_multiline_comment) then
+            predicates := predicates + predicates_on_line(MemoCode,Operator_Index);
+      end;
+   end;
+   Check_string := false;
+   check_multiline_comment := false;
+   check_slash_comment := false;
+   for i := 1 to length(MemoCode.Text) do
+   begin
+      if ((MemoCode.Text[I] = '&') and (MemoCode.Text[I+1] = '&')) or
+         ((MemoCode.Text[I] = '|') and (MemoCode.Text[I+1] = '|')) then
+      begin
+      for j := 1 to i do
+         check_on_comment(MemoCode,j);
+      if ((Check_string) or (check_slash_comment) or (check_multiline_comment)) and (predicates > 0) then
+         Dec(predicates);
+      end;
+   end;
+   result := Operators_Count;
+   LabelMeiers.Caption := 'Интервал по метрике Майерса: ' + '[' + inttostr(result) +','
+                           + inttostr(result + predicates) + ']';
+end;
+
+
+procedure TFormMacCaibe.ButtonAnalyzeClick(Sender: TObject);
+begin
+   LabelMacNumber.Caption := 'Цикломатическое число МакКейба: ' + inttostr(Find_Operators(MemoCode,LabelMeiers));
+end;
+
+procedure TFormMacCaibe.ButtonLoadClick(Sender: TObject);
+begin
+   if OpenDialog.Execute then
+      MemoCode.Lines.LoadFromFile(OpenDialog.FileName);
+end;
+
+procedure TFormMacCaibe.FormCreate(Sender: TObject);
+begin
+   MemoCode.Text := '';
+end;
+
+end.
